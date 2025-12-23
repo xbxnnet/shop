@@ -1,4 +1,4 @@
-// Knallmeisters Shop - Vanilla JavaScript
+// Knallmeisters Shop - Vanilla JavaScript mit allen Verbesserungen
 class OnlineShop {
   constructor() {
     this.state = {
@@ -11,14 +11,16 @@ class OnlineShop {
       cart: JSON.parse(localStorage.getItem('shopCart') || '[]'),
       showCart: false,
       showCheckout: false,
+      showProductDetail: null, // Produktdetail Modal
+      showCouponManagement: false, // Admin Gutschein-Verwaltung
+      showOrderTracking: false, // Admin Bestellverfolgung
       checkoutForm: {
         name: '',
-        email: '',
-        phone: '',
         notes: ''
       },
       couponCode: '',
       appliedCoupon: null,
+      orders: JSON.parse(localStorage.getItem('shopOrders') || '[]'),
       products: [
         {
           id: 1,
@@ -26,6 +28,7 @@ class OnlineShop {
           price: 8.99,
           image: 'https://images.unsplash.com/photo-1600857062241-98e5dba60f2f?w=500&h=500&fit=crop',
           description: 'Natürliche Seife mit ätherischem Lavendelöl',
+          weight: '100g',
           stock: 15
         },
         {
@@ -34,6 +37,7 @@ class OnlineShop {
           price: 12.50,
           image: 'https://images.unsplash.com/photo-1587049352846-4a222e784210?w=500&h=500&fit=crop',
           description: 'Regionaler Bio-Honig aus eigener Imkerei',
+          weight: '500g',
           stock: 8
         },
         {
@@ -42,6 +46,7 @@ class OnlineShop {
           price: 15.99,
           image: 'https://images.unsplash.com/photo-1602874801006-94c8e7fb6677?w=500&h=500&fit=crop',
           description: 'Soja-Wachs Kerze mit natürlichen Duftstoffen',
+          weight: '250g',
           stock: 12
         },
         {
@@ -50,6 +55,7 @@ class OnlineShop {
           price: 9.99,
           image: 'https://images.unsplash.com/photo-1564890369478-c89ca6d9cde9?w=500&h=500&fit=crop',
           description: '5 verschiedene Bio-Kräutertees',
+          weight: '100g',
           stock: 20
         }
       ]
@@ -58,15 +64,16 @@ class OnlineShop {
     this.config = {
       ADMIN_PASSWORD: 'admin2024',
       VALID_CUSTOMER_CODES: ['STAMMKUNDE2024', 'KUNDE123', 'VIP2024'],
-      COUPONS: {
+      COUPONS: JSON.parse(localStorage.getItem('shopCoupons') || JSON.stringify({
         'WELCOME10': { discount: 10, type: 'percent' },
         'SAVE5': { discount: 5, type: 'fixed' }
-      },
+      })),
       PICKUP_LOCATION: {
         address: 'Musterstraße 123, 12345 Musterstadt',
         coordinates: '50.7753, 6.0839',
         hours: 'Mo-Fr: 14:00-18:00 Uhr'
-      }
+      },
+      ADMIN_EMAIL: 'admin@knallmeisters.de'
     };
 
     this.init();
@@ -79,6 +86,10 @@ class OnlineShop {
 
   attachEventListeners() {
     document.addEventListener('click', (e) => {
+      // Utility: Stop propagation für modals
+      e.stopPropagation();
+
+      // Admin Login
       if (e.target.id === 'adminLoginBtn') {
         this.setState({ showAdminLogin: true });
         this.renderModals();
@@ -91,6 +102,59 @@ class OnlineShop {
         this.renderModals();
       }
 
+      // Admin: Gutschein-Verwaltung
+      if (e.target.id === 'manageCouponsBtn') {
+        this.setState({ showCouponManagement: true });
+        this.renderModals();
+      }
+      if (e.target.id === 'closeCouponManagement') {
+        this.setState({ showCouponManagement: false });
+        this.renderModals();
+      }
+      if (e.target.id && e.target.id.startsWith('deleteCoupon-')) {
+        const code = e.target.id.split('-')[1];
+        delete this.config.COUPONS[code];
+        localStorage.setItem('shopCoupons', JSON.stringify(this.config.COUPONS));
+        this.renderModals();
+      }
+      if (e.target.id === 'addCouponBtn') {
+        const code = document.getElementById('newCouponCode')?.value.toUpperCase();
+        const discount = parseInt(document.getElementById('newCouponDiscount')?.value);
+        const type = document.getElementById('newCouponType')?.value;
+        
+        if (code && discount > 0 && type) {
+          this.config.COUPONS[code] = { discount, type };
+          localStorage.setItem('shopCoupons', JSON.stringify(this.config.COUPONS));
+          this.renderModals();
+        } else {
+          alert('❌ Bitte füllen Sie alle Felder aus');
+        }
+      }
+
+      // Admin: Bestellverfolgung
+      if (e.target.id === 'manageOrdersBtn') {
+        this.setState({ showOrderTracking: true });
+        this.renderModals();
+      }
+      if (e.target.id === 'closeOrderTracking') {
+        this.setState({ showOrderTracking: false });
+        this.renderModals();
+      }
+      if (e.target.id && e.target.id.startsWith('approveOrder-')) {
+        const orderId = e.target.id.split('-')[2];
+        this.approveOrder(orderId);
+      }
+      if (e.target.id && e.target.id.startsWith('rejectOrder-')) {
+        const orderId = e.target.id.split('-')[2];
+        this.rejectOrder(orderId);
+      }
+      if (e.target.id && e.target.id.startsWith('openOrder-')) {
+        const orderId = e.target.id.split('-')[2];
+        this.setState({ selectedOrder: this.state.orders.find(o => o.id === orderId) });
+        this.renderModals();
+      }
+
+      // Customer Code
       if (e.target.id === 'customerCodeBtn') {
         this.setState({ showCustomerLogin: true });
         this.renderModals();
@@ -103,6 +167,7 @@ class OnlineShop {
         this.renderModals();
       }
 
+      // Cart
       if (e.target.id === 'cartBtn') {
         this.setState({ showCart: !this.state.showCart });
         this.renderCart();
@@ -112,11 +177,32 @@ class OnlineShop {
         this.renderCart();
       }
 
-      if (e.target.dataset.productId) {
-        const product = this.state.products.find(p => p.id === parseInt(e.target.dataset.productId));
-        if (product) this.addToCart(product);
+      // Product Detail (clicking product card)
+      if (e.target.closest('.product-card')) {
+        const card = e.target.closest('.product-card');
+        const productId = parseInt(card.dataset.productId);
+        const product = this.state.products.find(p => p.id === productId);
+        if (product && !this.state.isAdmin) {
+          this.setState({ showProductDetail: product });
+          this.renderModals();
+        }
       }
 
+      // Close product detail
+      if (e.target.id === 'closeProductDetail') {
+        this.setState({ showProductDetail: null });
+        this.renderModals();
+      }
+
+      // Add to Cart (from product detail)
+      if (e.target.id === 'addToCartBtn' && this.state.showProductDetail) {
+        this.addToCart(this.state.showProductDetail);
+        this.setState({ showProductDetail: null });
+        this.renderModals();
+        alert('✅ Produkt zum Warenkorb hinzugefügt!');
+      }
+
+      // Cart Actions
       if (e.target.id && e.target.id.startsWith('qty-minus-')) {
         const id = parseInt(e.target.id.split('-')[2]);
         this.updateQuantity(id, -1);
@@ -130,10 +216,12 @@ class OnlineShop {
         this.removeFromCart(id);
       }
 
+      // Coupon
       if (e.target.id === 'applyCouponBtn') {
         this.applyCoupon();
       }
 
+      // Checkout
       if (e.target.id === 'checkoutBtn') {
         this.setState({ showCart: false, showCheckout: true });
         this.renderModals();
@@ -159,12 +247,6 @@ class OnlineShop {
       }
       if (e.target.id === 'checkoutName') {
         this.state.checkoutForm.name = e.target.value;
-      }
-      if (e.target.id === 'checkoutEmail') {
-        this.state.checkoutForm.email = e.target.value;
-      }
-      if (e.target.id === 'checkoutPhone') {
-        this.state.checkoutForm.phone = e.target.value;
       }
       if (e.target.id === 'checkoutNotes') {
         this.state.checkoutForm.notes = e.target.value;
@@ -194,6 +276,7 @@ class OnlineShop {
 
   saveCart() {
     localStorage.setItem('shopCart', JSON.stringify(this.state.cart));
+    localStorage.setItem('shopOrders', JSON.stringify(this.state.orders));
   }
 
   handleAdminLogin() {
@@ -289,20 +372,57 @@ class OnlineShop {
     }
   }
 
+  approveOrder(orderId) {
+    const order = this.state.orders.find(o => o.id === orderId);
+    if (order) {
+      order.status = 'approved';
+      order.approvedAt = new Date().toLocaleString('de-DE');
+      
+      // Email an Kunde senden
+      fetch('https://formspree.io/f/maqwvbbj', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: order.name,
+          subject: `✅ Bestellung #${order.id} bestätigt`,
+          message: `Ihre Bestellung wurde angenommen! Abholung: ${order.approvedAt}`
+        })
+      });
+      
+      this.setState({ orders: this.state.orders });
+      this.renderModals();
+      alert('✅ Bestellung angenommen!');
+    }
+  }
+
+  rejectOrder(orderId) {
+    const order = this.state.orders.find(o => o.id === orderId);
+    if (order) {
+      const reason = prompt('Grund für Ablehnung:');
+      if (reason) {
+        order.status = 'rejected';
+        order.rejectionReason = reason;
+        this.setState({ orders: this.state.orders });
+        this.renderModals();
+        alert('❌ Bestellung abgelehnt');
+      }
+    }
+  }
+
   async handleCheckout() {
-    const { name, email, phone, notes } = this.state.checkoutForm;
-    if (!name || !email) {
-      alert('⚠️ Bitte füllen Sie alle Pflichtfelder aus.');
+    const { name, notes } = this.state.checkoutForm;
+    if (!name) {
+      alert('⚠️ Bitte geben Sie Ihren Namen ein.');
       return;
     }
 
     const { total, subtotal, discount } = this.calculateTotals();
+    const orderId = 'ORD-' + Date.now();
+    
     const orderDetails = `
-Neue Bestellung:
+Neue Bestellung #${orderId}:
 
 Kunde: ${name}
-Email: ${email}
-Telefon: ${phone || '—'}
 
 Produkte:
 ${this.state.cart.map(item => `- ${item.name} x${item.quantity} = ${(item.price * item.quantity).toFixed(2)}€`).join('\n')}
@@ -314,35 +434,49 @@ Gesamtsumme: ${total.toFixed(2)}€
 Zahlungsart: Bar bei Abholung
 
 ${notes ? `Notizen: ${notes}` : ''}
+
+ADMIN: Bitte freischalten, ablehnen oder verschieben!
     `.trim();
 
+    const order = {
+      id: orderId,
+      name,
+      notes,
+      products: this.state.cart,
+      subtotal,
+      discount,
+      total,
+      status: 'pending', // pending, approved, rejected
+      createdAt: new Date().toLocaleString('de-DE'),
+      approvedAt: null,
+      rejectionReason: null
+    };
+
+    this.state.orders.push(order);
+
     try {
-      const formspreeUrl = 'https://formspree.io/f/maqwvbbj';
-      const response = await fetch(formspreeUrl, {
+      const response = await fetch('https://formspree.io/f/maqwvbbj', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
-          email,
-          phone,
-          notes,
           order: orderDetails,
           total: total.toFixed(2)
         })
       });
 
       if (response.ok) {
-        alert('✅ Bestellung erfolgreich! Wir melden uns bei Ihnen.');
+        alert('✅ Bestellung erfolgreich eingereicht!\n\nDie Bestätigung erhalten Sie auf dieser Website.');
         this.setState({
           cart: [],
-          checkoutForm: { name: '', email: '', phone: '', notes: '' },
+          checkoutForm: { name: '', notes: '' },
           appliedCoupon: null,
           showCheckout: false
         });
         this.renderModals();
         this.render();
       } else {
-        alert('❌ Fehler beim Senden der Bestellung. Bitte versuchen Sie es erneut.');
+        alert('❌ Fehler beim Senden. Bitte versuchen Sie es erneut.');
       }
     } catch (error) {
       alert('❌ Netzwerkfehler. Bitte versuchen Sie es erneut.');
@@ -378,9 +512,20 @@ ${notes ? `Notizen: ${notes}` : ''}
               </span>
             `}
             
+            ${this.state.isAdmin ? `
+              <button id="manageCouponsBtn" class="flex items-center space-x-2 px-3 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors text-sm font-medium">
+                <span>🎟️</span>
+                <span class="hidden sm:inline">Gutscheine</span>
+              </button>
+              <button id="manageOrdersBtn" class="flex items-center space-x-2 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium">
+                <span>📋</span>
+                <span class="hidden sm:inline">Bestellungen</span>
+              </button>
+            ` : ''}
+            
             <button id="adminLoginBtn" class="flex items-center space-x-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium">
               <span>👤</span>
-              <span class="hidden sm:inline">Admin</span>
+              <span class="hidden sm:inline">${this.state.isAdmin ? 'Abmelden' : 'Admin'}</span>
             </button>
             
             <button id="cartBtn" class="relative flex items-center space-x-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium">
@@ -401,7 +546,7 @@ ${notes ? `Notizen: ${notes}` : ''}
     container.className = 'products-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6';
     
     container.innerHTML = this.state.products.map(product => `
-      <div class="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden">
+      <div class="product-card bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden cursor-pointer" data-product-id="${product.id}">
         <div class="relative overflow-hidden h-64 bg-gray-200">
           <img src="${product.image}" alt="${product.name}" class="w-full h-full object-cover hover:scale-110 transition-transform duration-300" />
           ${this.state.isAdmin ? `<div class="absolute top-2 right-2 bg-red-500 text-white text-xs px-2 py-1 rounded">ADMIN</div>` : ''}
@@ -414,13 +559,17 @@ ${notes ? `Notizen: ${notes}` : ''}
             <input type="number" step="0.01" data-product-id="${product.id}" data-edit-field="price" value="${product.price}" class="w-full text-2xl font-bold text-indigo-600 mb-2 border-b border-gray-300 focus:border-indigo-500 outline-none" />
           ` : `
             <h3 class="font-bold text-lg mb-2 text-gray-800">${product.name}</h3>
-            <p class="text-sm text-gray-600 mb-3 min-h-[40px]">${product.description}</p>
+            <p class="text-sm text-gray-600 mb-1">Gewicht: ${product.weight}</p>
+            <p class="text-sm text-gray-600 mb-3">${product.description}</p>
             <p class="text-2xl font-bold text-indigo-600 mb-4">${product.price.toFixed(2)} €</p>
+            <p class="text-xs text-gray-500 mb-3">Klicke zum Anzeigen von Details</p>
           `}
           
-          <button data-product-id="${product.id}" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all font-medium shadow-md hover:shadow-lg">
-            🛒 In den Warenkorb
-          </button>
+          ${!this.state.isAdmin ? '' : `
+            <button class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all font-medium shadow-md hover:shadow-lg">
+              🛒 Zum Warenkorb
+            </button>
+          `}
         </div>
       </div>
     `).join('');
@@ -542,6 +691,7 @@ ${notes ? `Notizen: ${notes}` : ''}
   renderModals() {
     let modalsHTML = '';
 
+    // Admin Login Modal
     if (this.state.showAdminLogin && !this.state.isAdmin) {
       modalsHTML += `
         <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -557,6 +707,37 @@ ${notes ? `Notizen: ${notes}` : ''}
       `;
     }
 
+    // Product Detail Modal
+    if (this.state.showProductDetail) {
+      const p = this.state.showProductDetail;
+      modalsHTML += `
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div class="bg-white rounded-2xl p-8 max-w-2xl w-full my-8 shadow-2xl">
+            <div class="flex justify-between items-start mb-6">
+              <h2 class="text-3xl font-bold text-gray-800">${p.name}</h2>
+              <button id="closeProductDetail" class="text-gray-500 hover:text-gray-700 text-2xl">✕</button>
+            </div>
+            
+            <div class="grid md:grid-cols-2 gap-6">
+              <img src="${p.image}" alt="${p.name}" class="rounded-lg w-full h-80 object-cover" />
+              <div>
+                <p class="text-2xl font-bold text-indigo-600 mb-4">${p.price.toFixed(2)} €</p>
+                <div class="space-y-3 mb-6">
+                  <p class="text-gray-700"><strong>Beschreibung:</strong> ${p.description}</p>
+                  <p class="text-gray-700"><strong>Gewicht:</strong> ${p.weight}</p>
+                  <p class="text-gray-700"><strong>Lagerbestand:</strong> ${p.stock} Stück</p>
+                </div>
+                <button id="addToCartBtn" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-4 rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all font-bold text-lg shadow-lg">
+                  🛒 In den Warenkorb
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Customer Code Modal
     if (this.state.showCustomerLogin) {
       modalsHTML += `
         <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -578,6 +759,104 @@ ${notes ? `Notizen: ${notes}` : ''}
       `;
     }
 
+    // Coupon Management Modal (Admin)
+    if (this.state.showCouponManagement && this.state.isAdmin) {
+      modalsHTML += `
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div class="bg-white rounded-2xl p-8 max-w-2xl w-full my-8 shadow-2xl">
+            <div class="flex justify-between items-center mb-6">
+              <h2 class="text-3xl font-bold text-gray-800">🎟️ Gutscheine verwalten</h2>
+              <button id="closeCouponManagement" class="text-gray-500 hover:text-gray-700 text-2xl">✕</button>
+            </div>
+            
+            <div class="space-y-6">
+              <!-- Neuen Gutschein hinzufügen -->
+              <div class="bg-gray-50 p-6 rounded-xl">
+                <h3 class="font-bold text-lg mb-4">Neuen Gutschein erstellen</h3>
+                <div class="grid grid-cols-3 gap-3 mb-3">
+                  <input id="newCouponCode" type="text" placeholder="Code (z.B. SAVE20)" class="px-4 py-2 border border-gray-300 rounded-lg outline-none" />
+                  <input id="newCouponDiscount" type="number" placeholder="Rabatt" class="px-4 py-2 border border-gray-300 rounded-lg outline-none" />
+                  <select id="newCouponType" class="px-4 py-2 border border-gray-300 rounded-lg outline-none">
+                    <option value="percent">Prozent</option>
+                    <option value="fixed">Euro</option>
+                  </select>
+                </div>
+                <button id="addCouponBtn" class="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 font-medium">
+                  ➕ Hinzufügen
+                </button>
+              </div>
+
+              <!-- Bestehende Gutscheine -->
+              <div>
+                <h3 class="font-bold text-lg mb-3">Bestehende Gutscheine</h3>
+                <div class="space-y-2">
+                  ${Object.entries(this.config.COUPONS).map(([code, coupon]) => `
+                    <div class="flex justify-between items-center bg-gray-50 p-4 rounded-lg">
+                      <div>
+                        <p class="font-semibold">${code}</p>
+                        <p class="text-sm text-gray-600">${coupon.discount}${coupon.type === 'percent' ? '%' : '€'}</p>
+                      </div>
+                      <button id="deleteCoupon-${code}" class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Löschen</button>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Order Tracking Modal (Admin)
+    if (this.state.showOrderTracking && this.state.isAdmin) {
+      modalsHTML += `
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div class="bg-white rounded-2xl p-8 max-w-4xl w-full my-8 shadow-2xl">
+            <div class="flex justify-between items-center mb-6">
+              <h2 class="text-3xl font-bold text-gray-800">📋 Bestellverfolgung</h2>
+              <button id="closeOrderTracking" class="text-gray-500 hover:text-gray-700 text-2xl">✕</button>
+            </div>
+            
+            ${this.state.orders.length === 0 ? `
+              <p class="text-gray-600 text-center py-8">Keine Bestellungen vorhanden</p>
+            ` : `
+              <div class="space-y-3">
+                ${this.state.orders.map(order => `
+                  <div class="border rounded-lg p-4">
+                    <div class="flex justify-between items-start mb-3">
+                      <div>
+                        <p class="font-bold text-lg">#${order.id}</p>
+                        <p class="text-sm text-gray-600">${order.name} | ${order.createdAt}</p>
+                        <p class="text-sm font-semibold text-indigo-600">${order.total.toFixed(2)}€</p>
+                      </div>
+                      <span class="px-3 py-1 rounded-full text-sm font-medium ${
+                        order.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                        order.status === 'approved' ? 'bg-green-100 text-green-700' :
+                        'bg-red-100 text-red-700'
+                      }">
+                        ${order.status === 'pending' ? '⏳ Ausstehend' : order.status === 'approved' ? '✅ Angenommen' : '❌ Abgelehnt'}
+                      </span>
+                    </div>
+                    ${order.status === 'pending' ? `
+                      <div class="flex space-x-2">
+                        <button id="approveOrder-Order-${order.id}" class="flex-1 bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700 font-medium">✅ Annehmen</button>
+                        <button id="rejectOrder-Order-${order.id}" class="flex-1 bg-red-600 text-white px-3 py-2 rounded hover:bg-red-700 font-medium">❌ Ablehnen</button>
+                      </div>
+                    ` : order.status === 'approved' ? `
+                      <p class="text-sm text-green-700">Angenommen am: ${order.approvedAt}</p>
+                    ` : `
+                      <p class="text-sm text-red-700">Grund: ${order.rejectionReason}</p>
+                    `}
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    }
+
+    // Checkout Modal
     if (this.state.showCheckout) {
       const { total, subtotal, discount } = this.calculateTotals();
       modalsHTML += `
@@ -589,16 +868,6 @@ ${notes ? `Notizen: ${notes}` : ''}
               <div>
                 <label class="block text-sm font-semibold text-gray-700 mb-2">Name *</label>
                 <input id="checkoutName" type="text" value="${this.state.checkoutForm.name}" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" required />
-              </div>
-
-              <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-2">E-Mail *</label>
-                <input id="checkoutEmail" type="email" value="${this.state.checkoutForm.email}" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" required />
-              </div>
-
-              <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-2">Telefon</label>
-                <input id="checkoutPhone" type="tel" value="${this.state.checkoutForm.phone}" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" />
               </div>
 
               <div>
